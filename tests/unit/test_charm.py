@@ -2,67 +2,114 @@
 # See LICENSE file for licensing details.
 #
 # Learn more about testing at: https://juju.is/docs/sdk/testing
-
-import unittest
-from unittest.mock import call, MagicMock
+from unittest.mock import call
+import pytest
+import logging
 
 from charm import CharmCoreDNS
 from ops.model import ActiveStatus, WaitingStatus
+from ops.pebble import ServiceStatus
 from ops.testing import Harness
 
 from tests.unit import COREFILE_BASE, COREFILE_EXTRA, EXTRA_SERVER
 
 
-class TestCharm(unittest.TestCase):
-    def setUp(self):
-        self.harness = Harness(CharmCoreDNS)
-        self.addCleanup(self.harness.cleanup)
-        self.harness.begin()
-        container = self.harness.model.unit.get_container("coredns")
-        container.push = MagicMock()
-        container.stop = MagicMock()
-        container.start = MagicMock()
-        self.harness.model.get_binding = MagicMock()
+@pytest.fixture()
+def harness(mocker):
+    harness = Harness(CharmCoreDNS)
+    harness.begin()
+    harness.model.get_binding = mocker.MagicMock()
+    return harness
 
-    def test_coredns_pebble_ready(self):
-        initial_plan = self.harness.get_container_pebble_plan("coredns")
-        self.assertEqual(initial_plan.to_yaml(), "{}\n")
-        expected_plan = {
-            "services": {
-                "coredns": {
-                    "override": "replace",
-                    "summary": "CoreDNS",
-                    "command": "/coredns -conf /etc/coredns/Corefile",
-                    "startup": "enabled",
-                }
-            },
-        }
-        container = self.harness.model.unit.get_container("coredns")
-        self.harness.charm.on.coredns_pebble_ready.emit(container)
-        updated_plan = self.harness.get_container_pebble_plan(
-            "coredns").to_dict()
-        self.assertEqual(expected_plan, updated_plan)
-        service = self.harness.model.unit.get_container(
-            "coredns").get_service("coredns")
-        self.assertTrue(service.is_running())
-        self.assertEqual(self.harness.model.unit.status,
-                         WaitingStatus('Awaiting dns-provider relation'))
 
-    def test_config_changed(self):
-        self.harness.charm._is_running = MagicMock(return_value=True)
-        self.harness.update_config({"forward": "1.1.1.1"})
-        self.harness.update_config({"extra_servers": EXTRA_SERVER})
-        container = self.harness.model.unit.get_container("coredns")
-        container.push.assert_has_calls([
-            call("/etc/coredns/Corefile", COREFILE_BASE, make_dirs=False),
-            call("/etc/coredns/Corefile", COREFILE_EXTRA, make_dirs=False),
-        ])
+@pytest.fixture()
+def container(harness, mocker):
+    container = harness.model.unit.get_container("coredns")
+    container.push = mocker.MagicMock()
+    container.stop = mocker.MagicMock()
+    container.start = mocker.MagicMock()
+    return container
 
-    def test_dns_provider_relation_changed(self):
-        self.harness.charm._is_running = MagicMock(return_value=True)
-        relation_id = self.harness.add_relation("dns-provider",
-                                                "kubernetes-master")
-        self.harness.add_relation_unit(relation_id, "kubernetes-master/0")
-        self.harness.update_relation_data(relation_id, "kubernetes-master", {})
-        self.assertEqual(self.harness.model.unit.status,
-                         ActiveStatus('CoreDNS started'))
+
+def test_coredns_pebble_ready(harness, container):
+    initial_plan = harness.get_container_pebble_plan("coredns")
+    assert initial_plan.to_yaml() == "{}\n"
+    expected_plan = {
+        "services": {
+            "coredns": {
+                "override": "replace",
+                "summary": "CoreDNS",
+                "command": "/coredns -conf /etc/coredns/Corefile",
+                "startup": "enabled",
+            }
+        },
+    }
+    harness.charm.on.coredns_pebble_ready.emit(container)
+    updated_plan = harness.get_container_pebble_plan(
+        "coredns").to_dict()
+    assert expected_plan == updated_plan
+    service = harness.model.unit.get_container(
+        "coredns").get_service("coredns")
+    assert service.is_running()
+    assert harness.model.unit.status == WaitingStatus('Awaiting dns-provider relation')
+
+
+def test_coredns_pebble_ready_already_started(harness, container, caplog, mocker):
+    mocked_service = mocker.MagicMock()
+    mocked_service.current = ServiceStatus.ACTIVE
+    container.get_service = mocker.MagicMock(return_value=mocked_service)
+    with caplog.at_level(logging.INFO):
+        harness.charm.on.coredns_pebble_ready.emit(container)
+    assert "CoreDNS already started" in caplog.text
+
+
+def test_config_changed(harness, container, caplog, mocker):
+    mocked_service = mocker.MagicMock()
+    mocked_service.current = ServiceStatus.ACTIVE
+    container.get_service = mocker.MagicMock(return_value=mocked_service)
+    harness.update_config({"forward": "1.1.1.1"})
+    harness.update_config({"extra_servers": EXTRA_SERVER})
+    container.push.assert_has_calls([
+        call("/etc/coredns/Corefile", COREFILE_BASE, make_dirs=True),
+        call("/etc/coredns/Corefile", COREFILE_EXTRA, make_dirs=True),
+    ])
+
+
+def test_config_changed_not_running(harness, container, caplog, mocker):
+    # harness.charm._is_running = mocker.MagicMock(return_value=False)
+    mocked_service = mocker.MagicMock()
+    mocked_service.current = ServiceStatus.INACTIVE
+    container.get_service = mocker.MagicMock(return_value=mocked_service)
+    with caplog.at_level(logging.INFO):
+        harness.update_config({"forward": "1.1.1.1"})
+    assert "CoreDNS is not running" in caplog.text
+
+
+def test_config_changed_model_error(harness, container, caplog, mocker):
+
+    with caplog.at_level(logging.INFO):
+        harness.update_config({"forward": "1.1.1.1"})
+    assert "CoreDNS is not running" in caplog.text
+
+
+def test_dns_provider_relation_changed(harness, container, mocker):
+    mocked_service = mocker.MagicMock()
+    mocked_service.current = ServiceStatus.ACTIVE
+    container.get_service = mocker.MagicMock(return_value=mocked_service)
+    relation_id = harness.add_relation("dns-provider",
+                                            "kubernetes-master")
+    harness.add_relation_unit(relation_id, "kubernetes-master/0")
+    harness.update_relation_data(relation_id, "kubernetes-master", {})
+    assert harness.model.unit.status == ActiveStatus('CoreDNS started')
+
+
+def test_dns_provider_relation_changed_not_running(harness, container, mocker):
+    mocked_service = mocker.MagicMock()
+    mocked_service.current = ServiceStatus.INACTIVE
+    container.get_service = mocker.MagicMock(return_value=mocked_service)
+    relation_id = harness.add_relation("dns-provider",
+                                       "kubernetes-master")
+    harness.add_relation_unit(relation_id, "kubernetes-master/0")
+    harness.update_relation_data(relation_id, "kubernetes-master", {})
+    assert harness.model.unit.status == WaitingStatus('CoreDNS is not running')
+
