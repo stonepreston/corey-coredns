@@ -35,3 +35,41 @@ def inactive_container(mocker, container):
     mocked_service.current = ServiceStatus.INACTIVE
     container.get_service = mocker.MagicMock(return_value=mocked_service)
     return container
+
+
+@pytest.fixture()
+def corefile_base():
+    return """.:53 {
+    errors
+    health {
+      lameduck 5s
+    }
+    ready
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+      fallthrough in-addr.arpa ip6.arpa
+      pods insecure
+    }
+    prometheus :9153
+    forward . 1.1.1.1
+    cache 30
+    loop
+    reload
+    loadbalance
+}
+
+"""
+
+
+@pytest.fixture()
+def extra_server():
+    return """. {{
+    log
+}}
+"""
+
+
+@pytest.fixture()
+def corefile_extra(corefile_base, extra_server):
+    return f"""{corefile_base[0:-2]}
+{extra_server}
+"""
