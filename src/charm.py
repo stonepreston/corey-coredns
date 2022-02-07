@@ -61,8 +61,11 @@ class CharmCoreDNS(CharmBase):
         provided_data = event.relation.data[self.unit]
         # TODO(coreycb): Use ingress address instead of bind address
         #                https://pad.lv/1922133
-        ingress_address = self.model.get_binding(
-            event.relation).network.bind_address
+        ingress_address = self.model.get_binding(event.relation).network.ingress_address
+        if not ingress_address:
+            event.defer()
+            return
+
         provided_data.update({
             "domain": self.model.config["domain"],
             "sdn-ip": str(ingress_address),
