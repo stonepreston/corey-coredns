@@ -1,5 +1,6 @@
 * Use ingress address instead of bind address
   - https://pad.lv/1922133
+  DONE
 
 * Ensure feature parity with pod_spec charm
   - https://github.com/charmed-kubernetes/charm-coredns/blob/master/src/charm.py

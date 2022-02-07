@@ -8,27 +8,15 @@ import logging
 
 from charm import CharmCoreDNS
 from ops.model import ActiveStatus, WaitingStatus, MaintenanceStatus
-from ops.pebble import ServiceStatus
 from ops.testing import Harness
 
 from tests.unit import COREFILE_BASE, COREFILE_EXTRA, EXTRA_SERVER
 
 
-@pytest.fixture()
-def harness(mocker):
+def test_not_leader():
     harness = Harness(CharmCoreDNS)
     harness.begin()
-    harness.model.get_binding = mocker.MagicMock()
-    return harness
-
-
-@pytest.fixture()
-def container(harness, mocker):
-    container = harness.model.unit.get_container("coredns")
-    container.push = mocker.MagicMock()
-    container.stop = mocker.MagicMock()
-    container.start = mocker.MagicMock()
-    return container
+    assert harness.charm.model.unit.status == WaitingStatus('Waiting for leadership')
 
 
 def test_coredns_pebble_ready(harness, container):
@@ -54,59 +42,43 @@ def test_coredns_pebble_ready(harness, container):
     assert harness.model.unit.status == WaitingStatus('Awaiting dns-provider relation')
 
 
-def test_coredns_pebble_ready_already_started(harness, container, caplog, mocker):
-    mocked_service = mocker.MagicMock()
-    mocked_service.current = ServiceStatus.ACTIVE
-    container.get_service = mocker.MagicMock(return_value=mocked_service)
+def test_coredns_pebble_ready_already_started(harness, active_container, caplog, mocker):
     with caplog.at_level(logging.INFO):
-        harness.charm.on.coredns_pebble_ready.emit(container)
+        harness.charm.on.coredns_pebble_ready.emit(active_container)
     assert "CoreDNS already started" in caplog.text
 
 
-def test_config_changed(harness, container, caplog, mocker):
-    mocked_service = mocker.MagicMock()
-    mocked_service.current = ServiceStatus.ACTIVE
-    container.get_service = mocker.MagicMock(return_value=mocked_service)
+def test_config_changed(harness, active_container, caplog, mocker):
     harness.update_config({"forward": "1.1.1.1"})
     harness.update_config({"extra_servers": EXTRA_SERVER})
-    container.push.assert_has_calls([
+    active_container.push.assert_has_calls([
         call("/etc/coredns/Corefile", COREFILE_BASE, make_dirs=True),
         call("/etc/coredns/Corefile", COREFILE_EXTRA, make_dirs=True),
     ])
 
 
-def test_config_changed_not_running(harness, container, caplog, mocker):
-    mocked_service = mocker.MagicMock()
-    mocked_service.current = ServiceStatus.INACTIVE
-    container.get_service = mocker.MagicMock(return_value=mocked_service)
+def test_config_changed_not_running(harness, inactive_container, caplog, mocker):
     with caplog.at_level(logging.INFO):
         harness.update_config({"forward": "1.1.1.1"})
     assert "CoreDNS is not running" in caplog.text
 
 
-def test_dns_provider_relation_changed(harness, container, mocker):
+def test_dns_provider_relation_changed(harness, active_container, mocker):
     harness.model.get_binding.return_value.network.ingress_address = "127.0.0.1"
-    mocked_service = mocker.MagicMock()
-    mocked_service.current = ServiceStatus.ACTIVE
-    container.get_service = mocker.MagicMock(return_value=mocked_service)
     relation_id = harness.add_relation("dns-provider",
                                             "kubernetes-master")
     harness.add_relation_unit(relation_id, "kubernetes-master/0")
     harness.update_relation_data(relation_id, "kubernetes-master", {})
-    # TODO: Assert that relation is updated correctly
-    # assert harness.get_relation_data(relation_id, "kubernetes-master/0") == {
-    #     "domain": "cluster.local",
-    #     "sdn-ip": "127.0.0.1",
-    #     "port": "53",
-    # }
+    assert harness.get_relation_data(relation_id, "corey-coredns/0") == {
+        "domain": "cluster.local",
+        "sdn-ip": "127.0.0.1",
+        "port": "53",
+    }
     assert harness.model.unit.status == ActiveStatus('CoreDNS started')
 
 
-def test_dns_provider_relation_changed_no_ingress_address(harness, container, mocker):
+def test_dns_provider_relation_changed_no_ingress_address(harness, active_container, mocker):
     harness.model.get_binding.return_value.network.ingress_address = None
-    mocked_service = mocker.MagicMock()
-    mocked_service.current = ServiceStatus.ACTIVE
-    container.get_service = mocker.MagicMock(return_value=mocked_service)
     relation_id = harness.add_relation("dns-provider",
                                             "kubernetes-master")
     harness.add_relation_unit(relation_id, "kubernetes-master/0")
@@ -114,10 +86,7 @@ def test_dns_provider_relation_changed_no_ingress_address(harness, container, mo
     assert harness.model.unit.status == MaintenanceStatus('')
 
 
-def test_dns_provider_relation_changed_not_running(harness, container, mocker):
-    mocked_service = mocker.MagicMock()
-    mocked_service.current = ServiceStatus.INACTIVE
-    container.get_service = mocker.MagicMock(return_value=mocked_service)
+def test_dns_provider_relation_changed_not_running(harness, inactive_container, mocker):
     relation_id = harness.add_relation("dns-provider",
                                        "kubernetes-master")
     harness.add_relation_unit(relation_id, "kubernetes-master/0")

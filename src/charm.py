@@ -22,6 +22,12 @@ class CharmCoreDNS(CharmBase):
 
     def __init__(self, *args):
         super().__init__(*args)
+
+        if not self.unit.is_leader():
+            # We can't do anything useful when not the leader, so do nothing.
+            self.model.unit.status = WaitingStatus("Waiting for leadership")
+            return
+
         self.framework.observe(self.on.coredns_pebble_ready,
                                self._on_coredns_pebble_ready)
         self.framework.observe(self.on.config_changed,
@@ -59,8 +65,6 @@ class CharmCoreDNS(CharmBase):
     def _on_dns_provider_relation_changed(self, event):
         """Provide relation data on dns-provider relation"""
         provided_data = event.relation.data[self.unit]
-        # TODO(coreycb): Use ingress address instead of bind address
-        #                https://pad.lv/1922133
         ingress_address = self.model.get_binding(event.relation).network.ingress_address
         if not ingress_address:
             event.defer()
