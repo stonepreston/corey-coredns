@@ -1,6 +1,6 @@
 # Copyright 2021 Ubuntu
 # See LICENSE file for licensing details.
-name: corey-coredns
+name: coredns
 description: CoreDNS
 summary: CoreDNS provides DNS resolution for Kubernetes
 tags:

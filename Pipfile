@@ -10,6 +10,8 @@ ops = ">=1.2.0"
 pytest = "*"
 pytest-mock = "*"
 pytest-cov = "*"
+pytest-operator = "*"
+lightkube = ">=0.10.0"
 
 [requires]
 python_version = "3.8"
