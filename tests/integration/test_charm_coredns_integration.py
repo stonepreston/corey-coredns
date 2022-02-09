@@ -2,11 +2,14 @@ import logging
 import pytest
 from pathlib import Path
 from juju.tag import untag
-
+from lightkube.resources.core_v1 import Pod, Service
+from lightkube import codecs
 log = logging.getLogger(__name__)
 
+SPEC_FILE = Path(__file__).parent / "data/validate-dns-spec.yaml"
 
-@pytest.mark.abort_on_fail
+
+# @pytest.mark.abort_on_fail
 async def test_build_and_deploy(ops_test, helpers):
     spark_operator_charm = await ops_test.build_charm(".")
 
@@ -17,6 +20,41 @@ async def test_build_and_deploy(ops_test, helpers):
     await ops_test.model.wait_for_idle(
         status="waiting", raise_on_blocked=True, timeout=300
     )
+
+
+# @pytest.fixture()
+# def coredns_ip(ops_test, lightkube_client):
+#     coredns_service = lightkube_client.get(Service, "coredns", namespace=ops_test.model_name)
+#     yield coredns_service.spec.clusterIP
+#
+#
+# @pytest.fixture()
+# def validate_dns_pod(ops_test, lightkube_client):
+#     spec = codecs.load_all_yaml(SPEC_FILE.read_text())
+#     for obj in spec:
+#         lightkube_client.create(obj)
+#
+#     lightkube_client.wait(
+#         Pod, "validate-dns", namespace="default", for_conditions=("ContainersReady",)
+#     )
+#
+#     for obj in spec:
+#         lightkube_client.delete(type(obj), obj.metadata.name)
+#
+#
+# async def test_validate_dns(ops_test, validate_dns_pod, coredns_ip):
+#
+#     log.info(f"DNS IP: {coredns_ip}")
+#     for name, found in (
+#         ("www.ubuntu.com", True),  # Should find an answer
+#         ("kubernetes.default.svc.cluster.local", False),
+#     ):  # Shouldn't find answer
+#         rc, stdout, stderr = await ops_test.run(
+#             "kubectl", "exec", "validate-dns", "--", "nslookup", name, coredns_ip
+#         )
+#         assert (
+#             "Non-authoritative answer" in stdout
+#         ) == found, f"stdout: {stdout}\n stderr: {stderr}"
 
 
 async def test_relation(ops_test, client_model):
